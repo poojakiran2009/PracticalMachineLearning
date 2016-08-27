@@ -1,0 +1,143 @@
+Project Assignment: Practical Machine Learning: Predict manner in which people exercise
+
+Goal: The goal of this project of the Coursera Practical Machine Learning course is to predict the manner in which people exercise as per instructions in the README 
+
+Target Variable: "classe" variable in training dataset Report
+
+We describe the steps involved in terms of pre-processing, modeling, evaluation and submitting the answer
+
+# PART 1 - PREPROCESSSING
+
+    First load the libraries 
+    Read the files directly from the location. fread in data.table allows us to do that. We Load the training and test data sets. We wil use the test set for the final validation
+
+```{r eval=TRUE}
+library (data.table); library (caret); library (parallel); library (doParallel); library (e1071)
+
+
+load ('training.rData')
+load ('testing.rData')
+```
+
+
+
+Remove variables that have missing values as below 
+```{r eval=TRUE}
+naCols <- which (training [,lapply(.SD, function(x) length(which(is.na(x))))] > 0)
+emptyCols <- which (training [,lapply(.SD, function(x) length(which(x=="")))] > 0) 
+missingCols <- c(naCols, emptyCols) 
+missingCols <- unique (missingCols) 
+predCols <- names (training)[-missingCols]
+```
+Columns to predict are the ones with belt, arm, dumbbell, forearm in them
+```{r eval=TRUE}
+    isPredictor <- predCols [which (grepl("belt|[^(fore)]arm|dumbbell|forearm", predCols))]
+    #We want only the predictor variables and the target classe
+    
+  training <- training [,c(isPredictor, "classe"),with=F] 
+    testing <- testing [,c(isPredictor),with=F]
+```
+    Remove variables with zero variance
+    Remove variables with zero variance
+    Remove correlated variables using findCorrelation in caret
+```{r eval=TRUE}
+    mynzv <- nearZeroVar (as.data.frame (training)[,isPredictor], saveMetrics = TRUE)
+zeroNms <- isPredictor [mynzv$zeroVar]
+    #none to remove
+    isPredictor <- isPredictor [!(isPredictor %in% zeroNms)]
+    
+    mycor <- findCorrelation (cor (as.data.frame (training)[,isPredictor])) 
+    
+    isPredictor <- isPredictor[!(isPredictor %in% isPredictor [mycor])]
+```
+###########PART 2 - CREATING PARTITIONS and DATA PREPARATION THAT DEPENDS ON TRAINING PARTITION
+
+In this section, we prepare data for further processing.
+  We go with 80% training and 20% validation dataset
+    Split dataset into 80% train and 20% validation
+```{r eval=TRUE}
+    seed <- 11 
+set.seed(seed) 
+inTrain <- createDataPartition(training$classe, p=0.8) 
+mytrain <- training [inTrain[[1]]] 
+myvalidation <- training[-inTrain[[1]]]
+```
+    Center and scale the variables based on the values in training center and scale the variables
+```{r eval=TRUE}
+mypreproc <- preProcess (mytrain[,isPredictor, with=F], method = c("center", "scale"))
+```
+apply the preprocess to training, validation and testing
+```{r eval=TRUE}
+mytrain <- predict (mypreproc, mytrain) 
+myvalidation <- predict (mypreproc, myvalidation) 
+testing <- predict (mypreproc, testing)
+```
+
+#PART 3 - MODELING
+
+We will try two techniques namely a random Forest and a Gradient Boosting machine
+
+We want to parallelize as the dataset has 15000 rows and do not want to wait for long time
+```{r eval=TRUE}
+cl <- makeCluster(detectCores() - 1) 
+registerDoParallel(cl) 
+ctrl <- trainControl(classProbs=TRUE, savePredictions=TRUE, allowParallel=TRUE)
+```
+We now use the caret package to train a random forest and also to train a gbm
+Next we will try different methods. Let us try random forest first
+```{r eval=TRUE}
+myrf <- train (x=mytrain[,isPredictor,with=F], y = as.factor(mytrain$classe), method="rf")
+```
+let us also try gbm
+```{r eval=TRUE}
+mygbm <- train (x=mytrain[,isPredictor,with=F], y = as.factor(mytrain$classe), method="gbm")
+```
+
+Just store the predictions on validation set and testing set for both gbm and also for rf
+Predict on the validation set
+
+```{r eval=TRUE}
+predrfvalid <- predict (myrf, myvalidation) 
+predgbmvalid <- predict (mygbm, myvalidation)
+```
+
+Predict on the test set
+```{r eval=TRUE}
+predrftest <- predict (myrf, testing) 
+predgbmtest <- predict (mygbm, testing)
+```
+#PART 4 - EVALUATION
+Random Forest yields the following results. as we see the model has been very accurate
+
+```{r eval=TRUE}
+confusionMatrix (myvalidation$classe, predrfvalid);
+print (confusionMatrix)
+```
+
+Evaluate gbm
+Evaluate model on the validation set - gbm results
+
+```{r eval=TRUE}
+confusionMatrix (myvalidation$classe, predgbmvalid)
+print (confusionMatrix)
+```
+COMPARE MODELS
+Random Forest has given better predictions than gbm. So we will keep random forest predictions
+
+#PART 5 - FINALIZE PREDICTIONS
+
+Therefore we finalize random forest predictions to be the latest and greatest code as suggested by Coursera
+
+```{r eval=TRUE}
+pml_write_files = function(x)
+  { 
+  n = length(x) 
+  for(i in 1:n)
+    { 
+    filename = paste0("problem_id_",i,".txt")
+write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE) 
+  } 
+  }
+
+pml_write_files(predrftest)
+```
